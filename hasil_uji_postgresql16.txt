@@ -1,0 +1,168 @@
+# Hasil eksekusi referensi - PostgreSQL 16.15, database kosong
+
+$ psql -d uts5 -f 01_skema_trigger_rpc.sql
+CREATE EXTENSION
+CREATE TABLE
+CREATE TABLE
+CREATE TABLE
+CREATE INDEX
+CREATE INDEX
+CREATE FUNCTION
+CREATE TRIGGER
+CREATE TRIGGER
+CREATE TABLE
+CREATE TABLE
+ALTER TABLE
+CREATE FUNCTION
+CREATE TRIGGER
+CREATE FUNCTION
+CREATE TABLE
+CREATE FUNCTION
+CREATE TRIGGER
+CREATE TRIGGER
+CREATE FUNCTION
+CREATE TRIGGER
+CREATE FUNCTION
+CREATE TRIGGER
+CREATE FUNCTION
+CREATE TRIGGER
+CREATE FUNCTION
+CREATE FUNCTION
+CREATE FUNCTION
+CREATE FUNCTION
+
+$ psql -d uts5 -f 02_uji_jurnal.sql
+INSERT 0 7
+--- T1: CHECK nol-nol & negatif
+INSERT 0 1
+psql:/home/claude/upd/02_uji_jurnal.sql:9: ERROR:  new row for relation "journal_lines" violates check constraint "chk_not_both_zero"
+psql:/home/claude/upd/02_uji_jurnal.sql:10: ERROR:  new row for relation "journal_lines" violates check constraint "chk_non_negative"
+--- T2: FK RESTRICT (akun & header yang sudah dipakai tidak bisa dihapus)
+INSERT 0 1
+psql:/home/claude/upd/02_uji_jurnal.sql:13: ERROR:  update or delete on table "chart_of_accounts" violates foreign key constraint "journal_lines_account_id_fkey" on table "journal_lines"
+psql:/home/claude/upd/02_uji_jurnal.sql:14: ERROR:  update or delete on table "journal_headers" violates foreign key constraint "journal_lines_header_id_fkey" on table "journal_lines"
+DELETE 1
+DELETE 1
+--- T3: jurnal tak seimbang tidak bisa POSTED (commit gagal)
+BEGIN
+INSERT 0 1
+psql:/home/claude/upd/02_uji_jurnal.sql:20: ERROR:  Jurnal 2 tidak seimbang / kosong (Debit=0, Kredit=0)
+--- T4: jurnal Kas Keluar seimbang -> post
+BEGIN
+INSERT 0 1
+INSERT 0 2
+                               hash                               
+------------------------------------------------------------------
+ 42c2b4f37b88d2cb7d8245e16eb2df1d817a3c31a10865a908e1a271926cefa8
+(1 row)
+
+COMMIT
+ header_id | reference_no | posting_status |     left     
+-----------+--------------+----------------+--------------
+         3 | KK-001       | POSTED         | 42c2b4f37b88
+(1 row)
+
+--- T5: UPDATE/DELETE posted ditolak
+psql:/home/claude/upd/02_uji_jurnal.sql:29: ERROR:  Jurnal KK-001 berstatus POSTED bersifat immutable. Gunakan jurnal pembalik (storno).
+psql:/home/claude/upd/02_uji_jurnal.sql:30: ERROR:  Jurnal KK-001 berstatus POSTED tidak boleh dihapus. Gunakan jurnal pembalik (storno).
+psql:/home/claude/upd/02_uji_jurnal.sql:31: ERROR:  Baris jurnal pada header berstatus POSTED tidak boleh diubah.
+psql:/home/claude/upd/02_uji_jurnal.sql:32: ERROR:  Baris jurnal pada header berstatus POSTED tidak boleh diubah.
+--- T6: storno
+ rpc_reverse_journal 
+---------------------
+                   4
+(1 row)
+
+ reference_no | posting_status | reversal_of_id 
+--------------+----------------+----------------
+ KK-001       | REVERSED       |               
+ REV-KK-001   | POSTED         |              3
+(2 rows)
+
+ account_code |   debit    |   credit   | reference_no 
+--------------+------------+------------+--------------
+ 6-1100       | 1500000.00 |       0.00 | KK-001
+ 1-1100       |       0.00 | 1500000.00 | KK-001
+ 6-1100       |       0.00 | 1500000.00 | REV-KK-001
+ 1-1100       | 1500000.00 |       0.00 | REV-KK-001
+(4 rows)
+
+ reference_no | integritas_ok 
+--------------+---------------
+ REV-KK-001   | t
+ KK-001       | t
+(2 rows)
+
+--- T6b: RPC dengan payload persis dari form Gemini (Rp1.500.000 = 150000000 sen)
+ header_id 
+-----------
+         5
+(1 row)
+
+ reference_no | cashflow_activity | posting_status | account_code |   debit    |   credit   
+--------------+-------------------+----------------+--------------+------------+------------
+ bkk          | OPERASI           | POSTED         | 5110         | 1500000.00 |       0.00
+ bkk          | OPERASI           | POSTED         | 1120         |       0.00 | 1500000.00
+(2 rows)
+
+--- T6c: kredit ke akun non-Kas/Bank ditolak database
+psql:/home/claude/upd/02_uji_jurnal.sql:48: ERROR:  Voucher kas keluar wajib mengkredit minimal satu akun Kas/Bank
+--- T6d: debit 1.500.000 vs kredit 1.000.000 ditolak database
+psql:/home/claude/upd/02_uji_jurnal.sql:52: ERROR:  Tidak dapat posting: Debit 1500000.00 <> Kredit 1000000.00
+ jurnal_bkk_tersimpan 
+----------------------
+                    0
+(1 row)
+
+--- T7: manipulasi tersembunyi (trigger proteksi dimatikan), lalu verifikasi hash
+ALTER TABLE
+UPDATE 2
+ reference_no | integritas_ok 
+--------------+---------------
+ KK-001       | f
+(1 row)
+
+
+$ psql -d uts5 -f 03_uji_persediaan.sql
+INSERT 0 1
+--- PURCHASE 5
+INSERT 0 1
+ item_id | stock_qty 
+---------+-----------
+ BRG-001 |        15
+(1 row)
+
+--- SALE 3 -> jurnal HPP 150000
+INSERT 0 1
+ item_id | stock_qty 
+---------+-----------
+ BRG-001 |        12
+(1 row)
+
+ reference_no | posting_status | account_code |   debit   |  credit   
+--------------+----------------+--------------+-----------+-----------
+ HPP-2        | POSTED         | 5-1100       | 150000.00 |      0.00
+ HPP-2        | POSTED         | 1-1300       |      0.00 | 150000.00
+(2 rows)
+
+--- SALE 100 -> ditolak
+psql:/home/claude/upd/03_uji_persediaan.sql:11: ERROR:  Stok BRG-001 tidak cukup: tersedia 12, diminta 100
+ item_id | stock_qty 
+---------+-----------
+ BRG-001 |        12
+(1 row)
+
+ trx_count 
+-----------
+         2
+(1 row)
+
+--- ADJUSTMENT -20 -> ditolak; +2 diterima
+psql:/home/claude/upd/03_uji_persediaan.sql:15: ERROR:  Stok BRG-001 tidak cukup: tersedia 12, diminta 20
+INSERT 0 1
+ item_id | stock_qty 
+---------+-----------
+ BRG-001 |        14
+(1 row)
+
+
