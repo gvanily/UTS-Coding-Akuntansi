@@ -1,0 +1,159 @@
+# Hasil eksekusi referensi - PostgreSQL 16.15 (Ubuntu), database kosong
+# Bandingkan dengan tangkapan layar PostgreSQL Sandbox Anda sendiri
+
+=== $ psql -f sql/01_skema_trigger_rpc.sql ===
+CREATE EXTENSION
+CREATE TABLE
+CREATE TABLE
+CREATE TABLE
+CREATE INDEX
+CREATE INDEX
+CREATE FUNCTION
+CREATE TRIGGER
+CREATE TRIGGER
+CREATE TABLE
+CREATE TABLE
+ALTER TABLE
+CREATE FUNCTION
+CREATE TRIGGER
+CREATE FUNCTION
+CREATE TABLE
+CREATE FUNCTION
+CREATE TRIGGER
+CREATE TRIGGER
+CREATE FUNCTION
+CREATE TRIGGER
+CREATE FUNCTION
+CREATE TRIGGER
+CREATE FUNCTION
+CREATE TRIGGER
+CREATE FUNCTION
+CREATE FUNCTION
+CREATE FUNCTION
+CREATE FUNCTION
+
+=== $ psql -f sql/02_uji_jurnal.sql ===
+INSERT 0 4
+--- T1: CHECK nol-nol & negatif
+INSERT 0 1
+psql:/home/claude/repo_uts_coding/sql/02_uji_jurnal.sql:7: ERROR:  new row for relation "journal_lines" violates check constraint "chk_not_both_zero"
+DETAIL:  Failing row contains (1, 1, 1, 0.00, 0.00).
+psql:/home/claude/repo_uts_coding/sql/02_uji_jurnal.sql:8: ERROR:  new row for relation "journal_lines" violates check constraint "chk_non_negative"
+DETAIL:  Failing row contains (2, 1, 1, -5.00, 0.00).
+--- T2: FK RESTRICT (akun & header yang sudah dipakai tidak bisa dihapus)
+INSERT 0 1
+psql:/home/claude/repo_uts_coding/sql/02_uji_jurnal.sql:11: ERROR:  update or delete on table "chart_of_accounts" violates foreign key constraint "journal_lines_account_id_fkey" on table "journal_lines"
+DETAIL:  Key (account_id)=(1) is still referenced from table "journal_lines".
+psql:/home/claude/repo_uts_coding/sql/02_uji_jurnal.sql:12: ERROR:  update or delete on table "journal_headers" violates foreign key constraint "journal_lines_header_id_fkey" on table "journal_lines"
+DETAIL:  Key (header_id)=(1) is still referenced from table "journal_lines".
+DELETE 1
+DELETE 1
+--- T3: jurnal tak seimbang tidak bisa POSTED (commit gagal)
+BEGIN
+INSERT 0 1
+psql:/home/claude/repo_uts_coding/sql/02_uji_jurnal.sql:18: ERROR:  Jurnal 2 tidak seimbang / kosong (Debit=0, Kredit=0)
+CONTEXT:  PL/pgSQL function fn_check_journal_balance() line 18 at RAISE
+--- T4: jurnal Kas Keluar seimbang -> post
+BEGIN
+INSERT 0 1
+INSERT 0 2
+                               hash                               
+------------------------------------------------------------------
+ ee6ec861e9fb8957d94ee8371fff0b9b4e153124cd48c66299202d0e5608f7dd
+(1 row)
+
+COMMIT
+ header_id | reference_no | posting_status |     left     
+-----------+--------------+----------------+--------------
+         3 | KK-001       | POSTED         | ee6ec861e9fb
+(1 row)
+
+--- T5: UPDATE/DELETE posted ditolak
+psql:/home/claude/repo_uts_coding/sql/02_uji_jurnal.sql:27: ERROR:  Jurnal KK-001 berstatus POSTED bersifat immutable. Gunakan jurnal pembalik (storno).
+CONTEXT:  PL/pgSQL function fn_protect_posted_header() line 20 at RAISE
+psql:/home/claude/repo_uts_coding/sql/02_uji_jurnal.sql:28: ERROR:  Jurnal KK-001 berstatus POSTED tidak boleh dihapus. Gunakan jurnal pembalik (storno).
+CONTEXT:  PL/pgSQL function fn_protect_posted_header() line 5 at RAISE
+psql:/home/claude/repo_uts_coding/sql/02_uji_jurnal.sql:29: ERROR:  Baris jurnal pada header berstatus POSTED tidak boleh diubah.
+CONTEXT:  PL/pgSQL function fn_protect_posted_lines() line 7 at RAISE
+psql:/home/claude/repo_uts_coding/sql/02_uji_jurnal.sql:30: ERROR:  Baris jurnal pada header berstatus POSTED tidak boleh diubah.
+CONTEXT:  PL/pgSQL function fn_protect_posted_lines() line 7 at RAISE
+--- T6: storno
+ rpc_reverse_journal 
+---------------------
+                   4
+(1 row)
+
+ reference_no | posting_status | reversal_of_id 
+--------------+----------------+----------------
+ KK-001       | REVERSED       |               
+ REV-KK-001   | POSTED         |              3
+(2 rows)
+
+ account_code |   debit    |   credit   | reference_no 
+--------------+------------+------------+--------------
+ 6-1100       | 1500000.00 |       0.00 | KK-001
+ 1-1100       |       0.00 | 1500000.00 | KK-001
+ 6-1100       |       0.00 | 1500000.00 | REV-KK-001
+ 1-1100       | 1500000.00 |       0.00 | REV-KK-001
+(4 rows)
+
+ reference_no | integritas_ok 
+--------------+---------------
+ REV-KK-001   | t
+ KK-001       | t
+(2 rows)
+
+--- T7: manipulasi tersembunyi (trigger proteksi dimatikan), lalu verifikasi hash
+ALTER TABLE
+UPDATE 2
+ reference_no | integritas_ok 
+--------------+---------------
+ KK-001       | f
+(1 row)
+
+
+=== $ psql -f sql/03_uji_persediaan.sql ===
+INSERT 0 1
+--- PURCHASE 5
+INSERT 0 1
+ item_id | stock_qty 
+---------+-----------
+ BRG-001 |        15
+(1 row)
+
+--- SALE 3 -> jurnal HPP 150000
+INSERT 0 1
+ item_id | stock_qty 
+---------+-----------
+ BRG-001 |        12
+(1 row)
+
+ reference_no | posting_status | account_code |   debit   |  credit   
+--------------+----------------+--------------+-----------+-----------
+ HPP-2        | POSTED         | 5-1100       | 150000.00 |      0.00
+ HPP-2        | POSTED         | 1-1300       |      0.00 | 150000.00
+(2 rows)
+
+--- SALE 100 -> ditolak
+psql:/home/claude/repo_uts_coding/sql/03_uji_persediaan.sql:11: ERROR:  Stok BRG-001 tidak cukup: tersedia 12, diminta 100
+CONTEXT:  PL/pgSQL function trg_update_stock_and_journal() line 25 at RAISE
+ item_id | stock_qty 
+---------+-----------
+ BRG-001 |        12
+(1 row)
+
+ trx_count 
+-----------
+         2
+(1 row)
+
+--- ADJUSTMENT -20 -> ditolak; +2 diterima
+psql:/home/claude/repo_uts_coding/sql/03_uji_persediaan.sql:15: ERROR:  Stok BRG-001 tidak cukup: tersedia 12, diminta 20
+CONTEXT:  PL/pgSQL function trg_update_stock_and_journal() line 25 at RAISE
+INSERT 0 1
+ item_id | stock_qty 
+---------+-----------
+ BRG-001 |        14
+(1 row)
+
+
